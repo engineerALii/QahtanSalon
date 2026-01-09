@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>صالون قحطان | Qahtan Salon</title>
+    
+    <!-- Favicons & App Icons -->
+    <link rel="icon" type="image/png" sizes="16x16" href="logo.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="logo.png">
+    <link rel="icon" type="image/png" sizes="48x48" href="logo.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="logo.png">
+    <link rel="shortcut icon" href="logo.png">
+    <link rel="apple-touch-icon" href="logo.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="logo.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="logo.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="logo.png">
+    <meta name="msapplication-TileImage" content="logo.png">
+    <meta name="msapplication-TileColor" content="#121212">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        gold: {
+                            400: '#D4AF37',
+                            500: '#C5A028',
+                            600: '#B08D1E',
+                        },
+                        dark: {
+                            900: '#121212',
+                            800: '#1E1E1E',
+                            700: '#2D2D2D',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Cairo', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, deleteDoc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Configuration ---
+        let firebaseConfig;
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } else {
+            firebaseConfig = JSON.parse(document.getElementById('firebase-config').textContent);
+        }
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'qahtan-salon-v8-fixed';
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- State Management ---
+        const state = {
+            user: null,
+            currentView: 'home',
+            isAdmin: false,
+            biometricsEnabled: localStorage.getItem('biometricsEnabled') === 'true',
+            booking: {
+                service: null,
+                barber: null,
+                date: null,
+                time: null
+            },
+            services: [],
+            barbers: [],
+            config: {
+                salonName: "قحطان",
+                logo: "", 
+                heroTitle: "أناقتك.. مسؤوليتنا",
+                heroSubtitle: "احجز موعدك الآن مع أفضل الحلاقين",
+                currency: "د.ع"
+            }
+        };
+
+        // --- Icons Map ---
+        const availableIcons = [
+            { id: 'scissors', label: 'مقص (رمز)' },
+            { id: 'beard', label: 'لحية (رمز)' },
+            { id: 'crown', label: 'تاج (رمز)' },
+            { id: 'face', label: 'وجه (رمز)' },
+            { id: 'child', label: 'طفل (رمز)' }
+        ];
+
+        // --- DOM Elements ---
+        const views = {
+            home: document.getElementById('view-home'),
+            services: document.getElementById('view-services'),
+            barbers: document.getElementById('view-barbers'),
+            calendar: document.getElementById('view-calendar'),
+            summary: document.getElementById('view-summary'),
+            success: document.getElementById('view-success'),
+            profile: document.getElementById('view-profile'),
+            admin: document.getElementById('view-admin')
+        };
+
+        // --- Helper Functions ---
+        const formatMoney = (amount) => `${amount.toLocaleString()} ${state.config.currency}`;
+        
+        // Show/Hide Views
+        window.router = (viewName) => {
+            Object.values(views).forEach(el => {
+                if(el) {
+                    el.classList.add('hidden');
+                    el.classList.remove('fade-in');
+                }
+            });
+            
+            if (views[viewName]) {
+                views[viewName].classList.remove('hidden');
+                views[viewName].classList.add('fade-in');
+                state.currentView = viewName;
+                window.scrollTo(0, 0);
+            }
+        };
+
+        // --- Image Handling ---
+        window.handleFileUpload = (input, targetId, previewId) => {
+            const file = input.files[0];
+            if (!file) return;
+            const btnLabel = input.nextElementSibling;
+            if(btnLabel) btnLabel.textContent = "جاري المعالجة...";
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    const maxWidth = 300;
+                    let newWidth = img.width;
+                    let newHeight = img.height;
+                    if (img.width > maxWidth) {
+                        const scale = maxWidth / img.width;
+                        newWidth = maxWidth;
+                        newHeight = img.height * scale;
+                    }
+                    canvas.width = newWidth;
+                    canvas.height = newHeight;
+                    ctx.drawImage(img, 0, 0, newWidth, newHeight);
+                    const base64 = canvas.toDataURL('image/jpeg', 0.8);
+                    document.getElementById(targetId).value = base64;
+                    if(previewId) {
+                        const previewEl = document.getElementById(previewId);
+                        if(previewEl) {
+                            previewEl.src = base64;
+                            previewEl.classList.remove('hidden');
+                        }
+                    }
+                    if(btnLabel) btnLabel.textContent = "تم رفع الصورة ✅";
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
+        // --- Authentication ---
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        };
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                state.user = user;
+                loadInitialData();
+            }
+        });
+
+        // --- Data Loading ---
+        async function loadInitialData() {
+            const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'main');
+            onSnapshot(configRef, (snap) => {
+                if (snap.exists()) {
+                    state.config = { ...state.config, ...snap.data() };
+                    updateUIConfig();
+                } else {
+                    setDoc(configRef, state.config);
+                }
+                if(state.isAdmin) renderAdminContent();
+            });
+
+            const servicesRef = collection(db, 'artifacts', appId, 'public', 'data', 'services');
+            onSnapshot(servicesRef, (snap) => {
+                if (snap.empty) { seedServices(servicesRef); } 
+                else {
+                    state.services = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                    renderServices(state.services);
+                    if(state.isAdmin) renderAdminContent();
+                }
+            });
+
+            const barbersRef = collection(db, 'artifacts', appId, 'public', 'data', 'barbers');
+            onSnapshot(barbersRef, (snap) => {
+                if (snap.empty) { seedBarbers(barbersRef); } 
+                else {
+                    state.barbers = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                    renderBarbers(state.barbers);
+                    if(state.isAdmin) renderAdminContent();
+                }
+            });
+            loadUserBookings();
+        }
+
+        function updateUIConfig() {
+            const salonNameEl = document.getElementById('ui-salon-name');
+            if(salonNameEl) salonNameEl.textContent = state.config.salonName;
+            const heroTitleEl = document.getElementById('ui-hero-title');
+            const heroSubEl = document.getElementById('ui-hero-sub');
+            if(heroTitleEl) heroTitleEl.textContent = state.config.heroTitle;
+            if(heroSubEl) heroSubEl.textContent = state.config.heroSubtitle;
+            const logoContainer = document.getElementById('ui-logo-container');
+            if (logoContainer) {
+                if (state.config.logo && state.config.logo.length > 10) {
+                    logoContainer.innerHTML = `<img src="${state.config.logo}" class="w-full h-full object-cover">`;
+                } else {
+                    logoContainer.innerHTML = `<svg class="w-6 h-6 text-black" fill="currentColor" viewBox="0 0 24 24"><path d="M19 19H5V5h14v14zM3 3v18h18V3H3z"/></svg>`;
+                }
+            }
+        }
+
+        async function seedServices(ref) {
+            const seeds = [
+                { name: "قص شعر كلاسيكي", price: 10000, duration: 30, icon: "scissors" },
+                { name: "تحديد لحية ملكي", price: 5000, duration: 20, icon: "beard" },
+                { name: "باكيج العريس", price: 25000, duration: 90, icon: "crown" },
+                { name: "صنفرة وتنظيف بشرة", price: 15000, duration: 40, icon: "face" },
+                { name: "حلاقة أطفال", price: 8000, duration: 30, icon: "child" }
+            ];
+            for (const s of seeds) await addDoc(ref, s);
+        }
+        async function seedBarbers(ref) {
+            const seeds = [
+                { name: "أبو قحطان", rating: 5.0, exp: "15 سنة", avatar: "" }, 
+                { name: "عمر", rating: 4.8, exp: "8 سنوات", avatar: "" }, 
+                { name: "يوسف", rating: 4.9, exp: "10 سنوات", avatar: "" }
+            ];
+            for (const b of seeds) await addDoc(ref, b);
+        }
+
+        // --- Rendering ---
+        function getServiceIconContent(iconData) {
+            if (iconData && (iconData.startsWith('http') || iconData.startsWith('data:image'))) {
+                return `<img src="${iconData}" class="w-full h-full object-cover rounded-full">`;
+            }
+            return getIcon(iconData);
+        }
+        function getBarberImage(barber) {
+            if (barber.avatar && (barber.avatar.startsWith('http') || barber.avatar.startsWith('data:image'))) {
+                return barber.avatar;
+            }
+            return `https://api.dicebear.com/7.x/avataaars/svg?seed=${barber.name}&backgroundColor=transparent`;
+        }
+
+        function renderServices(list) {
+            const container = document.getElementById('services-list');
+            container.innerHTML = list.map(s => `
+                <div onclick="window.selectService('${s.id}', '${s.name}', ${s.price})" class="bg-dark-800 p-4 rounded-xl border border-gray-800 flex justify-between items-center hover:border-gold-500 transition-colors cursor-pointer group">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-full bg-dark-700 flex items-center justify-center text-gold-400 group-hover:bg-gold-500 group-hover:text-black transition-colors overflow-hidden">
+                            ${getServiceIconContent(s.icon)}
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-lg text-white">${s.name}</h3>
+                            <p class="text-gray-400 text-sm">${s.duration} دقيقة</p>
+                        </div>
+                    </div>
+                    <div class="text-gold-400 font-bold text-xl">${formatMoney(s.price)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderBarbers(list) {
+            const container = document.getElementById('barbers-list');
+            container.innerHTML = list.map(b => `
+                <div onclick="window.selectBarber('${b.id}', '${b.name}')" class="bg-dark-800 p-4 rounded-xl border border-gray-800 text-center hover:border-gold-500 transition-all cursor-pointer transform hover:-translate-y-1">
+                    <div class="w-20 h-20 mx-auto rounded-full bg-gray-700 mb-3 overflow-hidden border-2 border-gold-500">
+                        <img src="${getBarberImage(b)}" alt="${b.name}" class="w-full h-full object-cover">
+                    </div>
+                    <h3 class="font-bold text-white text-lg">${b.name}</h3>
+                    <div class="flex justify-center items-center gap-1 text-gold-400 text-sm mt-1">
+                        <svg class="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/></svg>
+                        <span>${b.rating}</span>
+                        <span class="text-gray-500 text-xs">(${b.exp})</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        window.selectService = (id, name, price) => {
+            state.booking.service = { id, name, price };
+            state.booking.serviceId = id;
+            router('barbers');
+        };
+        window.selectBarber = (id, name) => {
+            state.booking.barber = { id, name };
+            state.booking.barberId = id;
+            initCalendar();
+            router('calendar');
+        };
+
+        // --- Calendar ---
+        function initCalendar() {
+            const today = new Date();
+            const datesContainer = document.getElementById('calendar-dates');
+            let datesHtml = '';
+            for(let i=0; i<7; i++) {
+                const d = new Date(today);
+                d.setDate(today.getDate() + i);
+                const isSelected = i === 0;
+                if(isSelected) state.booking.date = formatDate(d);
+                const dayName = d.toLocaleDateString('ar-IQ', { weekday: 'short' });
+                const dayNum = d.getDate();
+                datesHtml += `<div onclick="window.selectDate(this, '${formatDate(d)}')" class="date-card ${isSelected ? 'bg-gold-500 text-black' : 'bg-dark-800 text-gray-300'} p-3 rounded-xl min-w-[70px] text-center cursor-pointer border border-gray-700 hover:border-gold-400 transition-all"><div class="text-xs mb-1 opacity-80">${dayName}</div><div class="text-xl font-bold">${dayNum}</div></div>`;
+            }
+            datesContainer.innerHTML = datesHtml;
+            generateTimeSlots();
+        }
+        window.selectDate = (el, dateStr) => {
+            document.querySelectorAll('.date-card').forEach(c => { c.classList.remove('bg-gold-500', 'text-black'); c.classList.add('bg-dark-800', 'text-gray-300'); });
+            el.classList.remove('bg-dark-800', 'text-gray-300'); el.classList.add('bg-gold-500', 'text-black');
+            state.booking.date = dateStr;
+            generateTimeSlots();
+        };
+        function generateTimeSlots() {
+            const slotsContainer = document.getElementById('time-slots');
+            const startHour = 12; const endHour = 23;
+            let slotsHtml = '';
+            for(let i=startHour; i<=endHour; i++) {
+                const timeLabel = `${i > 12 ? i-12 : i}:00 ${i >= 12 ? 'م' : 'ص'}`;
+                const rawTime = `${i}:00`;
+                slotsHtml += `<button onclick="window.selectTime(this, '${rawTime}')" class="time-slot p-3 rounded-lg bg-dark-800 border border-gray-700 text-gray-300 hover:border-gold-400 focus:outline-none transition-all w-full">${timeLabel}</button>`;
+            }
+            slotsContainer.innerHTML = slotsHtml;
+        }
+        window.selectTime = (el, time) => {
+            document.querySelectorAll('.time-slot').forEach(t => { t.classList.remove('bg-gold-500', 'text-black', 'font-bold'); t.classList.add('bg-dark-800', 'text-gray-300'); });
+            el.classList.remove('bg-dark-800', 'text-gray-300'); el.classList.add('bg-gold-500', 'text-black');
+            state.booking.time = time;
+            document.getElementById('btn-confirm-time').disabled = false;
+        };
+
+        window.goToSummary = () => {
+            const { service, barber, date, time } = state.booking;
+            document.getElementById('summary-details').innerHTML = `
+                <div class="flex justify-between border-b border-gray-700 pb-2 mb-2"><span class="text-gray-400">الخدمة</span><span class="font-bold text-white">${service.name}</span></div>
+                <div class="flex justify-between border-b border-gray-700 pb-2 mb-2"><span class="text-gray-400">الحلاق</span><span class="font-bold text-white">${barber.name}</span></div>
+                <div class="flex justify-between border-b border-gray-700 pb-2 mb-2"><span class="text-gray-400">التاريخ</span><span class="font-bold text-white">${date}</span></div>
+                <div class="flex justify-between border-b border-gray-700 pb-2 mb-2"><span class="text-gray-400">الوقت</span><span class="font-bold text-white">${time}</span></div>
+                <div class="flex justify-between pt-2"><span class="text-gold-400">السعر</span><span class="font-bold text-xl text-gold-400">${formatMoney(service.price)}</span></div>
+            `;
+            router('summary');
+        };
+
+        window.confirmBooking = async () => {
+            const nameInput = document.getElementById('cust-name').value;
+            const phoneInput = document.getElementById('cust-phone').value;
+            if(!nameInput || !phoneInput) {
+                openModal({ title: "تنبيه", type: "confirm", message: "يرجى إدخال اسم الكريم ورقم الهاتف لإكمال الحجز", onConfirm: () => {} });
+                return;
+            }
+            const btn = document.getElementById('btn-final-book');
+            btn.innerHTML = '<span class="animate-spin">⌛</span> جاري الحجز...';
+            btn.disabled = true;
+            try {
+                const bookingData = {
+                    ...state.booking,
+                    userId: state.user.uid,
+                    status: 'confirmed',
+                    timestamp: serverTimestamp(),
+                    customerName: nameInput,
+                    phone: phoneInput
+                };
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), bookingData);
+                
+                // Show explicit status message in view-success
+                const statusMsg = document.getElementById('success-status-msg');
+                if(statusMsg) statusMsg.textContent = "حالة الحجز: مؤكد ✅";
+                
+                router('success');
+                loadUserBookings();
+            } catch (e) {
+                openModal({title: "خطأ", type: "confirm", message: "حدث خطأ أثناء الحجز", onConfirm: () => {}});
+                btn.disabled = false;
+                btn.innerHTML = 'تأكيد الحجز';
+            }
+        };
+
+        async function loadUserBookings() {
+            if(!state.user) return;
+            const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), where('userId', '==', state.user.uid));
+            onSnapshot(q, (snap) => {
+                let list = snap.docs.map(d => d.data());
+                list.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                renderBookingHistory(list);
+            });
+        }
+        function renderBookingHistory(list) {
+            const container = document.getElementById('booking-history');
+            if(list.length === 0) { container.innerHTML = '<div class="text-center text-gray-500 py-8">لا توجد حجوزات سابقة</div>'; return; }
+            container.innerHTML = list.map(b => `
+                <div class="bg-dark-800 p-4 rounded-xl mb-3 border-r-4 border-gold-500">
+                    <div class="flex justify-between items-start">
+                        <div><h4 class="font-bold text-white">${b.service.name}</h4><p class="text-sm text-gray-400 mt-1">مع ${b.barber.name}</p></div>
+                        <span class="bg-gold-500 text-black text-xs font-bold px-2 py-1 rounded">${b.time}</span>
+                    </div>
+                    <div class="mt-3 flex justify-between items-center border-t border-gray-700 pt-2"><span class="text-xs text-gray-500">${b.date}</span><span class="text-green-400 text-sm">مؤكد ✅</span></div>
+                </div>
+            `).join('');
+        }
+
+        // --- Modal System ---
+        window.openModal = (config) => {
+            const overlay = document.getElementById('modal-overlay');
+            const titleEl = document.getElementById('modal-title');
+            const contentEl = document.getElementById('modal-content');
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+
+            titleEl.textContent = config.title;
+            
+            // FORM MODAL
+            if (config.type === 'form') {
+                contentEl.innerHTML = config.fields.map(f => `
+                    <div class="mb-3">
+                        <label class="block text-gray-400 text-sm mb-1">${f.label}</label>
+                        ${f.type === 'select' 
+                            ? `<select id="field-${f.name}" class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none">
+                                ${f.options.map(o => `<option value="${o.value}" ${o.value == f.value ? 'selected' : ''}>${o.text}</option>`).join('')}
+                               </select>`
+                            : f.type === 'image'
+                                ? `
+                                    <div class="space-y-2">
+                                        <div class="relative">
+                                            <input type="file" id="file-${f.name}" class="hidden" accept="image/*" onchange="window.handleFileUpload(this, 'field-${f.name}', 'preview-${f.name}')">
+                                            <label for="file-${f.name}" class="cursor-pointer bg-dark-900 border border-gray-700 text-gray-400 rounded-lg p-3 w-full block text-center hover:border-gold-500 transition-colors">
+                                                📸 اضغط هنا لرفع صورة
+                                            </label>
+                                        </div>
+                                        <input type="text" id="field-${f.name}" value="${f.value || ''}" class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none text-xs" placeholder="أو ضع رابط الصورة هنا (URL)">
+                                        <img id="preview-${f.name}" src="${f.value || ''}" class="${f.value ? '' : 'hidden'} w-16 h-16 object-cover rounded-full mx-auto border border-gold-500">
+                                    </div>
+                                `
+                                : `<input type="${f.type}" id="field-${f.name}" value="${f.value || ''}" class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none">`
+                        }
+                    </div>
+                `).join('');
+            }
+            else if(config.type === 'confirm') {
+                contentEl.innerHTML = `<p class="text-gray-300 text-center">${config.message}</p>`;
+            } 
+            else if (config.type === 'prompt') {
+                contentEl.innerHTML = `
+                    <input type="${config.inputType || 'text'}" id="modal-input" 
+                           value="${config.value || ''}" 
+                           placeholder="${config.placeholder || ''}"
+                           class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none">
+                `;
+            }
+
+            confirmBtn.onclick = () => {
+                if (config.type === 'form') {
+                    const data = {};
+                    config.fields.forEach(f => {
+                        data[f.name] = document.getElementById(`field-${f.name}`).value;
+                    });
+                    config.onConfirm(data);
+                } else if(config.type === 'prompt') {
+                    const val = document.getElementById('modal-input').value;
+                    if(val) config.onConfirm(val);
+                } else {
+                    config.onConfirm();
+                }
+                window.closeModal();
+            };
+
+            overlay.classList.remove('hidden');
+        };
+
+        // Explicitly define close modal logic
+        const closeModalLogic = () => {
+            document.getElementById('modal-overlay').classList.add('hidden');
+        };
+        window.closeModal = closeModalLogic;
+
+        // --- Biometrics Logic ---
+        window.toggleBiometrics = () => {
+            state.biometricsEnabled = !state.biometricsEnabled;
+            localStorage.setItem('biometricsEnabled', state.biometricsEnabled);
+            openModal({ title: "تم التحديث", type: "confirm", message: state.biometricsEnabled ? "تم تفعيل الدخول ببصمة الوجه" : "تم إلغاء تفعيل الدخول ببصمة الوجه", onConfirm: () => { renderAdminContent(); } });
+        };
+
+        window.simulateFaceID = () => {
+            // Mock Face ID process
+            const btn = document.getElementById('face-id-btn');
+            btn.innerHTML = "🔍 جاري التعرف...";
+            setTimeout(() => {
+                state.isAdmin = true;
+                router('admin');
+                renderAdminContent();
+                window.closeModal();
+            }, 1500);
+        };
+
+        // --- Admin Logic ---
+        
+        // Define checkPass globally to avoid reference errors
+        window.checkPass = () => {
+            const pass = document.getElementById('admin-pass-input').value;
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            if (pass === "alikuka") {
+                state.isAdmin = true;
+                router('admin');
+                renderAdminContent();
+                window.closeModal();
+                if(confirmBtn) confirmBtn.style.display = 'block'; // Reset display
+            } else {
+                alert("كلمة المرور خاطئة");
+            }
+        };
+
+        window.tryAdminLogin = async () => {
+            const hasBiometrics = state.biometricsEnabled;
+            
+            // Custom Modal Content for Login
+            const overlay = document.getElementById('modal-overlay');
+            const titleEl = document.getElementById('modal-title');
+            const contentEl = document.getElementById('modal-content');
+            const confirmBtn = document.getElementById('modal-confirm-btn'); 
+            const cancelBtn = overlay.querySelector('button:first-child');
+
+            titleEl.textContent = "دخول المدير";
+            contentEl.innerHTML = `
+                <div class="space-y-4">
+                    ${hasBiometrics ? `
+                    <button id="face-id-btn" onclick="window.simulateFaceID()" class="w-full bg-dark-800 border border-gold-500 text-gold-500 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-dark-700 transition-all">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.2-2.848.578-4.182m12.356-3.21c.984.364 1.896.853 2.709 1.454l.598.46M6.34 18c-1.464-1.956-2.34-4.37-2.34-7a13.92 13.92 0 011.456-6.072l.145-.275"/></svg>
+                        دخول ببصمة الوجه
+                    </button>
+                    <div class="text-center text-xs text-gray-500">- أو -</div>
+                    ` : ''}
+                    <input type="password" id="admin-pass-input" placeholder="أدخل كلمة المرور" class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none">
+                    <button onclick="window.checkPass()" class="w-full bg-gold-500 text-black font-bold py-3 rounded-xl hover:bg-gold-400">دخول</button>
+                </div>
+            `;
+            
+            // Hide default confirm button since we have custom buttons
+            confirmBtn.style.display = 'none';
+            cancelBtn.onclick = () => {
+                overlay.classList.add('hidden');
+                confirmBtn.style.display = 'block'; // Reset
+            };
+
+            overlay.classList.remove('hidden');
+        };
+
+        async function renderAdminContent() {
+            if(!state.isAdmin) return;
+            
+            document.getElementById('admin-settings').innerHTML = `
+                <div class="bg-dark-800 p-4 rounded-xl mb-4">
+                    <h3 class="font-bold text-lg mb-3">الإعدادات العامة</h3>
+                    <div class="text-sm space-y-2 mb-3">
+                        <div class="flex justify-between border-b border-gray-700 pb-2"><span class="text-gray-400">اسم الصالون</span><span class="text-white">${state.config.salonName}</span></div>
+                    </div>
+                    <div class="flex items-center justify-between bg-dark-900 p-3 rounded-lg mb-3">
+                        <span class="text-sm text-gray-300">تسجيل الدخول ببصمة الوجه</span>
+                        <button onclick="window.toggleBiometrics()" class="w-12 h-6 rounded-full transition-colors ${state.biometricsEnabled ? 'bg-green-500' : 'bg-gray-600'} relative">
+                            <span class="absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${state.biometricsEnabled ? 'translate-x-6' : ''}"></span>
+                        </button>
+                    </div>
+                    <button onclick="window.editSettings()" class="w-full bg-dark-900 border border-gold-500 text-gold-500 py-2 rounded font-bold hover:bg-gold-500 hover:text-black transition-colors">تعديل الإعدادات</button>
+                </div>
+            `;
+
+            const bookingsQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), orderBy('timestamp', 'desc'));
+            const bookingsSnap = await getDocs(bookingsQ);
+            const bookings = bookingsSnap.docs.map(d => ({id: d.id, ...d.data()}));
+            const totalRevenue = bookings.reduce((sum, b) => sum + (b.service?.price || 0), 0);
+            
+            document.getElementById('admin-stats').innerHTML = `
+                <div class="bg-dark-800 p-4 rounded-xl border-l-4 border-gold-500">
+                    <div class="text-gray-400 text-sm">الحجوزات</div>
+                    <div class="text-2xl font-bold">${bookings.length}</div>
+                </div>
+                <div class="bg-dark-800 p-4 rounded-xl border-l-4 border-green-500">
+                    <div class="text-gray-400 text-sm">الإيرادات</div>
+                    <div class="text-xl font-bold text-green-400">${formatMoney(totalRevenue)}</div>
+                </div>
+            `;
+
+            // Updated Bookings List with WhatsApp Link and "Booked" Badge
+            document.getElementById('admin-bookings-list').innerHTML = bookings.map(b => `
+                <div class="bg-dark-800 p-3 rounded-lg mb-2 text-sm border border-gray-800 relative overflow-hidden">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="font-bold text-white">${b.customerName || 'ضيف'}</div>
+                        <div class="bg-green-900/50 text-green-400 px-2 py-1 rounded text-xs border border-green-800 flex items-center gap-1">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            تم حجز الموعد
+                        </div>
+                    </div>
+                    <div class="text-gray-400 text-xs flex justify-between mb-2">
+                        <span>${b.service?.name} (${b.barber?.name})</span>
+                        <span>${b.date} ${b.time}</span>
+                    </div>
+                    
+                    <a href="https://wa.me/${b.phone.replace(/[^0-9]/g, '')}" target="_blank" class="block bg-green-600 hover:bg-green-500 text-white text-center py-2 rounded-lg font-bold flex items-center justify-center gap-2 transition-colors">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>
+                        مراسلة ${b.phone}
+                    </a>
+                </div>
+            `).join('');
+
+            const servicesContainer = document.getElementById('admin-services-list');
+            servicesContainer.innerHTML = state.services.map(s => `
+                <div class="bg-dark-900 p-3 rounded flex justify-between items-center mb-2">
+                    <div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-dark-800 flex items-center justify-center text-gold-500 overflow-hidden">${getServiceIconContent(s.icon)}</div><div><div class="font-bold">${s.name}</div><div class="text-gray-400 text-xs">${formatMoney(s.price)} | ${s.duration}د</div></div></div>
+                    <div class="flex gap-2"><button onclick='window.editServiceFull(${JSON.stringify(s)})' class="text-blue-400 text-xs border border-blue-400 px-2 py-1 rounded">تعديل</button><button onclick="window.deleteItem('services', '${s.id}', 'الخدمة')" class="text-red-400 text-xs border border-red-400 px-2 py-1 rounded">حذف</button></div>
+                </div>
+            `).join('');
+
+            const barbersContainer = document.getElementById('admin-barbers-list');
+            barbersContainer.innerHTML = state.barbers.map(b => `
+                <div class="bg-dark-900 p-3 rounded flex justify-between items-center mb-2">
+                    <div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-gray-700 overflow-hidden"><img src="${getBarberImage(b)}" class="w-full h-full object-cover"></div><div><div class="font-bold">${b.name}</div><div class="text-gray-400 text-xs">⭐ ${b.rating} | ${b.exp}</div></div></div>
+                    <div class="flex gap-2"><button onclick='window.editBarberFull(${JSON.stringify(b)})' class="text-blue-400 text-xs border border-blue-400 px-2 py-1 rounded">تعديل</button><button onclick="window.deleteItem('barbers', '${b.id}', 'الحلاق')" class="text-red-400 text-xs border border-red-400 px-2 py-1 rounded">حذف</button></div>
+                </div>
+            `).join('');
+        }
+
+        window.editSettings = () => {
+            openModal({
+                title: "تعديل إعدادات الموقع",
+                type: 'form',
+                fields: [
+                    { name: 'salonName', label: 'اسم الصالون', type: 'text', value: state.config.salonName },
+                    { name: 'logo', label: 'شعار الموقع (Logo)', type: 'image', value: state.config.logo },
+                    { name: 'heroTitle', label: 'العنوان الرئيسي', type: 'text', value: state.config.heroTitle },
+                    { name: 'heroSubtitle', label: 'الوصف الفرعي', type: 'text', value: state.config.heroSubtitle },
+                    { name: 'currency', label: 'العملة', type: 'text', value: state.config.currency },
+                ],
+                onConfirm: async (data) => {
+                    state.config = { ...state.config, ...data };
+                    updateUIConfig();
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'main'), data);
+                    renderAdminContent();
+                }
+            });
+        };
+
+        window.editServiceFull = (service) => {
+            openModal({
+                title: "تعديل الخدمة",
+                type: 'form',
+                fields: [
+                    { name: 'name', label: 'اسم الخدمة', type: 'text', value: service.name },
+                    { name: 'price', label: 'السعر', type: 'number', value: service.price },
+                    { name: 'duration', label: 'المدة (دقيقة)', type: 'number', value: service.duration },
+                    { name: 'icon', label: 'الأيقونة أو الصورة', type: 'image', value: service.icon }
+                ],
+                onConfirm: async (data) => {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'services', service.id), {
+                        name: data.name,
+                        price: Number(data.price),
+                        duration: Number(data.duration),
+                        icon: data.icon
+                    });
+                    renderAdminContent();
+                }
+            });
+        };
+        window.editBarberFull = (barber) => {
+             openModal({
+                title: "تعديل الحلاق",
+                type: 'form',
+                fields: [
+                    { name: 'name', label: 'اسم الحلاق', type: 'text', value: barber.name },
+                    { name: 'exp', label: 'الخبرة', type: 'text', value: barber.exp },
+                    { name: 'rating', label: 'التقييم (0-5)', type: 'number', value: barber.rating },
+                    { name: 'avatar', label: 'صورة الحلاق', type: 'image', value: barber.avatar },
+                ],
+                onConfirm: async (data) => {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'barbers', barber.id), {
+                        name: data.name,
+                        exp: data.exp,
+                        rating: Number(data.rating),
+                        avatar: data.avatar
+                    });
+                    renderAdminContent();
+                }
+            });
+        };
+        window.deleteItem = (collectionName, id, typeName) => {
+            openModal({ title: "تأكيد الحذف", type: 'confirm', message: `هل أنت متأكد من حذف ${typeName}؟`, onConfirm: async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', collectionName, id)); renderAdminContent(); } });
+        };
+        window.addNewService = () => {
+             openModal({
+                title: "إضافة خدمة جديدة",
+                type: 'form',
+                fields: [
+                    { name: 'name', label: 'اسم الخدمة', type: 'text', value: '' },
+                    { name: 'price', label: 'السعر', type: 'number', value: '' },
+                    { name: 'duration', label: 'المدة', type: 'number', value: '30' },
+                    { name: 'icon', label: 'صورة الخدمة', type: 'image', value: '' }
+                ],
+                onConfirm: async (data) => {
+                    if(!data.name || !data.price) return;
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'services'), { name: data.name, price: Number(data.price), duration: Number(data.duration), icon: data.icon || 'scissors' });
+                    renderAdminContent();
+                }
+            });
+        };
+        window.addNewBarber = () => {
+             openModal({
+                title: "إضافة حلاق جديد",
+                type: 'form',
+                fields: [
+                    { name: 'name', label: 'اسم الحلاق', type: 'text', value: '' },
+                    { name: 'exp', label: 'الخبرة', type: 'text', value: 'خبرة جديدة' },
+                    { name: 'rating', label: 'التقييم', type: 'number', value: '5.0' },
+                    { name: 'avatar', label: 'صورة الحلاق', type: 'image', value: '' },
+                ],
+                onConfirm: async (data) => {
+                    if(!data.name) return;
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'barbers'), { name: data.name, exp: data.exp, rating: Number(data.rating), avatar: data.avatar || '' });
+                    renderAdminContent();
+                }
+            });
+        };
+
+        // --- Utils ---
+        function getIcon(name) {
+            const icons = {
+                // Modified icons to be more distinct outline style
+                scissors: `<svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>`,
+                beard: `<svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`, // Placeholder for face/beard
+                crown: `<svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>`, // Shield/Crown style
+                face: `<svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+                child: `<svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+                star: `<svg class="w-12 h-12 fill-current" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>`
+            };
+            return icons[name] || icons.scissors;
+        }
+        function formatDate(date) { return date.toISOString().split('T')[0]; }
+
+        // --- Init ---
+        window.loadInitialData = loadInitialData; window.initAuth = initAuth; window.loadUserBookings = loadUserBookings; window.renderAdminContent = renderAdminContent;
+        window.editServiceFull = editServiceFull; window.editBarberFull = editBarberFull; window.editSettings = editSettings; window.handleFileUpload = handleFileUpload;
+        initAuth();
+    </script>
+
+    <script id="firebase-config" type="application/json">
+        {
+            "apiKey": "AIzaSyD6MRZ7d7J1333erYoBrUGqocJNdGNjB7w",
+            "authDomain": "neew-aec2b.firebaseapp.com",
+            "databaseURL": "https://neew-aec2b-default-rtdb.firebaseio.com",
+            "projectId": "neew-aec2b",
+            "storageBucket": "neew-aec2b.firebasestorage.app",
+            "messagingSenderId": "70112873200",
+            "appId": "1:70112873200:web:b8ef2b3863be6f1bf39035"
+        }
+    </script>
+
+    <style>
+        body { background-color: #121212; color: #f5f5f5; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #1e1e1e; } ::-webkit-scrollbar-thumb { background: #2d2d2d; border-radius: 3px; } ::-webkit-scrollbar-thumb:hover { background: #D4AF37; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; } .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="font-sans h-screen flex flex-col overflow-hidden">
+
+    <!-- APP CONTAINER -->
+    <div id="app-container" class="flex-1 overflow-y-auto relative">
+        
+        <!-- HEADER -->
+        <header class="sticky top-0 z-30 bg-dark-900/90 backdrop-blur-md border-b border-gray-800 px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-gold-500 flex items-center justify-center overflow-hidden border border-gold-400" id="ui-logo-container">
+                    <svg class="w-6 h-6 text-black" fill="currentColor" viewBox="0 0 24 24"><path d="M19 19H5V5h14v14zM3 3v18h18V3H3z"/></svg>
+                </div>
+                <h1 class="font-bold text-lg tracking-wide text-white">صالون <span class="text-gold-400" id="ui-salon-name">قحطان</span></h1>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="window.router('home')" class="p-2 text-gray-300 hover:text-gold-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg></button>
+                <button onclick="window.router('profile'); window.loadUserBookings()" class="p-2 text-gray-300 hover:text-gold-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg></button>
+                <button onclick="window.tryAdminLogin()" class="p-2 rounded-full hover:bg-dark-800 text-gray-500 hover:text-red-400 ml-1"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></button>
+            </div>
+        </header>
+
+        <!-- VIEW: HOME -->
+        <div id="view-home" class="p-4 fade-in">
+            <div class="bg-gradient-to-br from-gold-600 to-gold-400 rounded-2xl p-6 text-black mb-8 shadow-lg relative overflow-hidden">
+                <div class="absolute -right-10 -top-10 w-40 h-40 bg-white opacity-10 rounded-full"></div>
+                <div class="relative z-10">
+                    <h2 class="text-3xl font-bold mb-2" id="ui-hero-title">أناقتك.. مسؤوليتنا</h2>
+                    <p class="mb-6 font-semibold opacity-80" id="ui-hero-sub">احجز موعدك الآن مع أفضل الحلاقين</p>
+                    <button onclick="window.router('services')" class="bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-gray-900 transition-colors inline-flex items-center gap-2"><span>احجز موعد</span><svg class="w-4 h-4 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg></button>
+                </div>
+            </div>
+
+            <!-- Single Featured Service Card -->
+            <h3 class="font-bold text-xl mb-4 text-white flex items-center gap-2">
+                <span class="w-1 h-6 bg-gold-500 rounded-full"></span>
+                خدماتنا المميزة
+            </h3>
+            <div class="mb-8">
+                <div onclick="window.router('services')" class="bg-dark-800 p-6 rounded-xl flex items-center justify-between gap-4 border border-gray-800 hover:border-gold-500 transition-colors cursor-pointer">
+                    <div class="flex items-center gap-4">
+                        <div class="text-gold-400">
+                            <!-- Star Icon -->
+                            <svg class="w-12 h-12 fill-current" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                        </div>
+                        <div>
+                            <h4 class="text-xl font-bold text-white">تصفح الخدمات</h4>
+                            <p class="text-gray-400 text-sm">شعر، لحية، عناية بالبشرة والمزيد</p>
+                        </div>
+                    </div>
+                    <svg class="w-6 h-6 text-gray-500 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: SERVICES -->
+        <div id="view-services" class="p-4 hidden fade-in">
+            <h2 class="text-2xl font-bold mb-6 text-center">اختر الخدمة</h2>
+            <div id="services-list" class="space-y-4"><div class="animate-pulse space-y-4"><div class="h-20 bg-dark-800 rounded-xl"></div></div></div>
+            <button onclick="window.router('home')" class="mt-8 text-center w-full text-gray-500 py-4">عودة</button>
+        </div>
+
+        <!-- VIEW: BARBERS -->
+        <div id="view-barbers" class="p-4 hidden fade-in">
+            <h2 class="text-2xl font-bold mb-6 text-center">اختر الحلاق</h2>
+            <div id="barbers-list" class="grid grid-cols-2 gap-4"></div>
+            <button onclick="window.router('services')" class="mt-8 text-center w-full text-gray-500 py-4">عودة</button>
+        </div>
+
+        <!-- VIEW: CALENDAR -->
+        <div id="view-calendar" class="p-4 hidden fade-in pb-32">
+            <h2 class="text-2xl font-bold mb-6 text-center">الموعد المناسب</h2>
+            <div class="mb-6"><h3 class="text-gray-400 mb-3 text-sm">الأيام المتاحة</h3><div id="calendar-dates" class="flex gap-3 overflow-x-auto pb-4 hide-scrollbar"></div></div>
+            <div><h3 class="text-gray-400 mb-3 text-sm">الأوقات المتاحة</h3><div id="time-slots" class="grid grid-cols-3 gap-3"></div></div>
+            <div class="fixed bottom-0 left-0 w-full p-4 bg-dark-900 border-t border-gray-800 z-20 pb-safe"><button id="btn-confirm-time" disabled onclick="window.goToSummary()" class="w-full bg-gold-500 disabled:bg-gray-700 disabled:text-gray-500 text-black font-bold py-4 rounded-xl text-lg shadow-lg transition-colors">متابعة</button></div>
+        </div>
+
+        <!-- VIEW: SUMMARY -->
+        <div id="view-summary" class="p-4 hidden fade-in">
+            <h2 class="text-2xl font-bold mb-6 text-center">تأكيد الحجز</h2>
+            <div class="bg-dark-800 p-6 rounded-2xl border border-gold-500/30 mb-6" id="summary-details"></div>
+            <div class="space-y-4 mb-6">
+                <div><label class="block text-gray-400 text-sm mb-1">اسم الكريم</label><input type="text" id="cust-name" class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none" placeholder="الاسم الثلاثي"></div>
+                <div><label class="block text-gray-400 text-sm mb-1">رقم الهاتف</label><input type="tel" id="cust-phone" class="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-gold-500 outline-none font-mono text-left" placeholder="07xxxxxxxxx" dir="ltr"></div>
+            </div>
+            <div class="space-y-3">
+                <button id="btn-final-book" onclick="window.confirmBooking()" class="w-full bg-gold-500 text-black font-bold py-4 rounded-xl text-lg shadow-lg hover:bg-gold-400 transition-colors">تأكيد الحجز</button>
+                <button onclick="window.router('calendar')" class="w-full bg-transparent border border-gray-700 text-white font-bold py-4 rounded-xl">تعديل الموعد</button>
+            </div>
+        </div>
+
+        <!-- VIEW: SUCCESS -->
+        <div id="view-success" class="hidden h-full flex flex-col items-center justify-center p-8 fade-in text-center">
+            <div class="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(34,197,94,0.4)]">
+                <svg class="w-12 h-12 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <h2 class="text-3xl font-bold mb-2">تم الحجز بنجاح!</h2>
+            <p class="text-gray-400 mb-2">نشكر ثقتكم في صالون قحطان</p>
+            <!-- Booking Status Indicator -->
+            <div id="success-status-msg" class="bg-dark-800 text-gold-400 px-4 py-2 rounded-full border border-gold-500/50 mb-8 font-bold animate-pulse">
+                حالة الحجز: جاري المعالجة...
+            </div>
+            <button onclick="window.router('home')" class="bg-dark-800 text-white px-8 py-3 rounded-xl border border-gray-700 hover:border-gold-500 transition-colors">العودة للرئيسية</button>
+        </div>
+
+        <!-- VIEW: PROFILE -->
+        <div id="view-profile" class="p-4 hidden fade-in">
+            <h2 class="text-2xl font-bold mb-6">سجل الحجوزات</h2>
+            <div id="booking-history"><div class="text-center py-10"><div class="inline-block animate-spin w-8 h-8 border-4 border-gold-500 border-t-transparent rounded-full mb-4"></div><p class="text-gray-500">جاري تحميل البيانات...</p></div></div>
+        </div>
+
+        <!-- VIEW: ADMIN DASHBOARD -->
+        <div id="view-admin" class="hidden p-4 fade-in pb-20">
+            <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-gold-400">لوحة التحكم</h2><button onclick="window.router('home')" class="text-sm text-gray-500">خروج</button></div>
+            <div id="admin-settings"></div>
+            <div class="grid grid-cols-2 gap-4 mb-8" id="admin-stats"></div>
+            <div class="space-y-8">
+                <!-- Services -->
+                <div class="bg-dark-800 p-4 rounded-xl"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-lg">إدارة الخدمات</h3><button onclick="window.addNewService()" class="bg-gold-500 text-black px-3 py-1 rounded text-sm font-bold">+ إضافة</button></div><div id="admin-services-list" class="space-y-2"></div></div>
+                <!-- Barbers -->
+                <div class="bg-dark-800 p-4 rounded-xl"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-lg">إدارة الحلاقين</h3><button onclick="window.addNewBarber()" class="bg-gold-500 text-black px-3 py-1 rounded text-sm font-bold">+ إضافة</button></div><div id="admin-barbers-list" class="space-y-2"></div></div>
+                <!-- Bookings -->
+                <div><h3 class="font-bold mb-4">أحدث الحجوزات</h3><div id="admin-bookings-list"></div></div>
+            </div>
+        </div>
+
+    </div>
+    
+    <!-- GENERIC MODAL -->
+    <div id="modal-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden fade-in">
+        <div class="bg-dark-800 border border-gold-500 rounded-2xl p-6 w-[90%] max-w-sm shadow-2xl relative transform transition-all scale-100">
+            <h3 id="modal-title" class="text-xl font-bold text-white mb-4 text-center">Title</h3>
+            <div id="modal-content" class="mb-6"></div>
+            <div class="flex gap-3 justify-center">
+                <button onclick="window.closeModal()" class="flex-1 px-4 py-3 rounded-xl border border-gray-600 text-gray-300 hover:text-white font-bold">إلغاء</button>
+                <button id="modal-confirm-btn" class="flex-1 px-4 py-3 rounded-xl bg-gold-500 text-black font-bold hover:bg-gold-400">تأكيد</button>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
